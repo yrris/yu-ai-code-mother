@@ -3,18 +3,21 @@ package com.yupi.yuaicodemother.service.impl;
 import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.StrUtil;
-import com.mybatisflex.core.query.QueryWrapper;
-import com.mybatisflex.spring.service.impl.ServiceImpl;
 import com.yupi.yuaicodemother.exception.BusinessException;
 import com.yupi.yuaicodemother.exception.ErrorCode;
 import com.yupi.yuaicodemother.model.dto.user.UserQueryRequest;
 import com.yupi.yuaicodemother.model.entity.User;
-import com.yupi.yuaicodemother.mapper.UserMapper;
 import com.yupi.yuaicodemother.model.enums.UserRoleEnum;
 import com.yupi.yuaicodemother.model.vo.LoginUserVO;
 import com.yupi.yuaicodemother.model.vo.UserVO;
+import com.yupi.yuaicodemother.repository.UserRepository;
 import com.yupi.yuaicodemother.service.UserService;
+import jakarta.annotation.Resource;
+import jakarta.persistence.criteria.Predicate;
 import jakarta.servlet.http.HttpServletRequest;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.util.DigestUtils;
 
@@ -29,9 +32,14 @@ import static com.yupi.yuaicodemother.constant.UserConstant.USER_LOGIN_STATE;
  * 用户 服务层实现。
  *
  * @author <a href="https://github.com/liyupi">程序员鱼皮</a>
+ * @author Refactored for JPA/Hibernate
  */
 @Service
-public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements UserService {
+@Slf4j
+public class UserServiceImpl implements UserService {
+
+    @Resource
+    private UserRepository userRepository;
 
     @Override
     public long userRegister(String userAccount, String userPassword, String checkPassword) {
@@ -48,26 +56,28 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         if (!userPassword.equals(checkPassword)) {
             throw new BusinessException(ErrorCode.PARAMS_ERROR, "两次输入的密码不一致");
         }
-        // 2. 查询用户是否已存在
-        QueryWrapper queryWrapper = new QueryWrapper();
-        queryWrapper.eq("userAccount", userAccount);
-        long count = this.mapper.selectCountByQuery(queryWrapper);
-        if (count > 0) {
+        // 2. 查询用户是否已存在 (使用JPA repository)
+        if (userRepository.existsByUserAccount(userAccount)) {
             throw new BusinessException(ErrorCode.PARAMS_ERROR, "账号重复");
         }
         // 3. 加密密码
         String encryptPassword = getEncryptPassword(userPassword);
-        // 4. 创建用户，插入数据库
-        User user = new User();
-        user.setUserAccount(userAccount);
-        user.setUserPassword(encryptPassword);
-        user.setUserName("无名");
-        user.setUserRole(UserRoleEnum.USER.getValue());
-        boolean saveResult = this.save(user);
-        if (!saveResult) {
+        // 4. 创建用户，插入数据库 (使用JPA repository)
+        User user = User.builder()
+                .userAccount(userAccount)
+                .userPassword(encryptPassword)
+                .userName("无名")
+                .userRole(UserRoleEnum.USER.getValue())
+                .build();
+
+        try {
+            User savedUser = userRepository.save(user);
+            log.info("用户注册成功，ID: {}, 账号: {}", savedUser.getId(), savedUser.getUserAccount());
+            return savedUser.getId();
+        } catch (Exception e) {
+            log.error("用户注册失败", e);
             throw new BusinessException(ErrorCode.OPERATION_ERROR, "注册失败，数据库错误");
         }
-        return user.getId();
     }
 
     @Override
@@ -94,16 +104,20 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         }
         // 2. 加密
         String encryptPassword = getEncryptPassword(userPassword);
-        // 3. 查询用户是否存在
-        QueryWrapper queryWrapper = new QueryWrapper();
-        queryWrapper.eq("userAccount", userAccount);
-        queryWrapper.eq("userPassword", encryptPassword);
-        User user = this.mapper.selectOneByQuery(queryWrapper);
+        // 3. 查询用户是否存在 (使用JPA Specification)
+        Specification<User> spec = (root, query, cb) -> cb.and(
+                cb.equal(root.get("userAccount"), userAccount),
+                cb.equal(root.get("userPassword"), encryptPassword)
+        );
+
+        User user = userRepository.findOne(spec).orElse(null);
         if (user == null) {
+            log.warn("登录失败，账号: {}", userAccount);
             throw new BusinessException(ErrorCode.PARAMS_ERROR, "用户不存在或密码错误");
         }
         // 4. 如果用户存在，记录用户的登录态
         request.getSession().setAttribute(USER_LOGIN_STATE, user);
+        log.info("用户登录成功，ID: {}, 账号: {}", user.getId(), user.getUserAccount());
         // 5. 返回脱敏的用户信息
         return this.getLoginUserVO(user);
     }
@@ -116,9 +130,9 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         if (currentUser == null || currentUser.getId() == null) {
             throw new BusinessException(ErrorCode.NOT_LOGIN_ERROR);
         }
-        // 从数据库查询当前用户信息
+        // 从数据库查询当前用户信息 (使用JPA repository)
         long userId = currentUser.getId();
-        currentUser = this.getById(userId);
+        currentUser = userRepository.findById(userId).orElse(null);
         if (currentUser == null) {
             throw new BusinessException(ErrorCode.NOT_LOGIN_ERROR);
         }
@@ -154,28 +168,79 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         }
         // 移除登录态
         request.getSession().removeAttribute(USER_LOGIN_STATE);
+        log.info("用户登出成功");
         return true;
     }
 
+    /**
+     * 获取查询条件 (JPA Specification)
+     *
+     * @param userQueryRequest 查询请求
+     * @return JPA Specification
+     */
     @Override
-    public QueryWrapper getQueryWrapper(UserQueryRequest userQueryRequest) {
+    public Specification<User> getQueryWrapper(UserQueryRequest userQueryRequest) {
         if (userQueryRequest == null) {
             throw new BusinessException(ErrorCode.PARAMS_ERROR, "请求参数为空");
         }
+
         Long id = userQueryRequest.getId();
         String userAccount = userQueryRequest.getUserAccount();
         String userName = userQueryRequest.getUserName();
         String userProfile = userQueryRequest.getUserProfile();
         String userRole = userQueryRequest.getUserRole();
+
+        return (root, query, criteriaBuilder) -> {
+            List<Predicate> predicates = new ArrayList<>();
+
+            // ID 精确匹配
+            if (id != null) {
+                predicates.add(criteriaBuilder.equal(root.get("id"), id));
+            }
+            // 用户角色精确匹配
+            if (StrUtil.isNotBlank(userRole)) {
+                predicates.add(criteriaBuilder.equal(root.get("userRole"), userRole));
+            }
+            // 账号模糊查询
+            if (StrUtil.isNotBlank(userAccount)) {
+                predicates.add(criteriaBuilder.like(root.get("userAccount"), "%" + userAccount + "%"));
+            }
+            // 用户名模糊查询
+            if (StrUtil.isNotBlank(userName)) {
+                predicates.add(criteriaBuilder.like(root.get("userName"), "%" + userName + "%"));
+            }
+            // 用户简介模糊查询
+            if (StrUtil.isNotBlank(userProfile)) {
+                predicates.add(criteriaBuilder.like(root.get("userProfile"), "%" + userProfile + "%"));
+            }
+
+            return criteriaBuilder.and(predicates.toArray(new Predicate[0]));
+        };
+    }
+
+    /**
+     * 获取排序对象
+     *
+     * @param userQueryRequest 查询请求
+     * @return Sort 对象
+     */
+    public Sort getSort(UserQueryRequest userQueryRequest) {
+        if (userQueryRequest == null) {
+            return Sort.by(Sort.Direction.DESC, "createTime");
+        }
+
         String sortField = userQueryRequest.getSortField();
         String sortOrder = userQueryRequest.getSortOrder();
-        return QueryWrapper.create()
-                .eq("id", id) // where id = ${id}
-                .eq("userRole", userRole) // and userRole = ${userRole}
-                .like("userAccount", userAccount)
-                .like("userName", userName)
-                .like("userProfile", userProfile)
-                .orderBy(sortField, "ascend".equals(sortOrder));
+
+        if (StrUtil.isBlank(sortField)) {
+            sortField = "createTime";
+        }
+
+        Sort.Direction direction = "ascend".equals(sortOrder)
+                ? Sort.Direction.ASC
+                : Sort.Direction.DESC;
+
+        return Sort.by(direction, sortField);
     }
 
     @Override

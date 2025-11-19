@@ -1,12 +1,11 @@
 package com.yupi.yuaicodemother.service;
 
-import com.mybatisflex.core.query.QueryWrapper;
-import com.mybatisflex.core.service.IService;
 import com.yupi.yuaicodemother.model.dto.user.UserQueryRequest;
 import com.yupi.yuaicodemother.model.entity.User;
 import com.yupi.yuaicodemother.model.vo.LoginUserVO;
 import com.yupi.yuaicodemother.model.vo.UserVO;
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.data.jpa.domain.Specification;
 
 import java.util.List;
 
@@ -14,8 +13,9 @@ import java.util.List;
  * 用户 服务层。
  *
  * @author <a href="https://github.com/liyupi">程序员鱼皮</a>
+ * @author Refactored for JPA/Hibernate
  */
-public interface UserService extends IService<User> {
+public interface UserService {
 
     /**
      * 用户注册
@@ -77,12 +77,12 @@ public interface UserService extends IService<User> {
     boolean userLogout(HttpServletRequest request);
 
     /**
-     * 根据查询条件构造数据查询参数
+     * 根据查询条件构造数据查询参数 (JPA Specification)
      *
-     * @param userQueryRequest
-     * @return
+     * @param userQueryRequest 查询请求
+     * @return JPA Specification
      */
-    QueryWrapper getQueryWrapper(UserQueryRequest userQueryRequest);
+    Specification<User> getQueryWrapper(UserQueryRequest userQueryRequest);
 
     /**
      * 加密
