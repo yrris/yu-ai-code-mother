@@ -6,12 +6,51 @@ spring:
     store-type: redis
     # session 30 天过期
     timeout: 2592000
-  # mysql
+  # PostgreSQL Database Configuration
   datasource:
-    driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://localhost:3306/yu_ai_code_mother
-    username: root
-    password: 123456
+    driver-class-name: org.postgresql.Driver
+    url: jdbc:postgresql://localhost:5432/yu_ai_code_mother
+    username: yu_ai_code_user
+    password: ${DB_PASSWORD:changeme}
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      pool-name: HikariPool-YuAI
+      auto-commit: true
+      connection-test-query: SELECT 1
+
+  # JPA / Hibernate Configuration
+  jpa:
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+    hibernate:
+      ddl-auto: validate  # Use 'none' in production, 'validate' to check schema
+      naming:
+        physical-strategy: org.hibernate.boot.model.naming.CamelCaseToUnderscoresNamingStrategy
+        implicit-strategy: org.springframework.boot.orm.jpa.hibernate.SpringImplicitNamingStrategy
+    properties:
+      hibernate:
+        format_sql: true
+        use_sql_comments: true
+        jdbc:
+          batch_size: 20
+          fetch_size: 50
+        order_inserts: true
+        order_updates: true
+        query:
+          in_clause_parameter_padding: true
+        default_schema: public
+        # Connection handling
+        connection:
+          provider_disables_autocommit: false
+        # Performance optimizations
+        cache:
+          use_second_level_cache: false
+          use_query_cache: false
+    show-sql: false  # Set to true for debugging
+    open-in-view: false  # Disable to avoid lazy loading issues
   # redis
   data:
     redis:
